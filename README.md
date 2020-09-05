@@ -8,4 +8,4 @@ Repositoty consist of the following folders:
 4. "Discriminant analysis and classification". The data is the result of a chemical analysis of three different kinds of red wine grown in Italy. Variables are different chemical indicators.
 5. "Clustering". The different approaches to clustering wine dataset are considered.
 
-The reports were made for presentation at the corresponding course in St. Petersburg State University.
+The reports were made for presentation at the corresponding master's course at St. Petersburg State University.
