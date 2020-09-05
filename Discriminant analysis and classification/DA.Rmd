@@ -1,0 +1,485 @@
+---
+title: "Discriminant analysis and classification"
+author: "Romanova"
+date: '26 ноября 2018 г '
+
+output: 
+  html_document:
+    toc: true 
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: united  
+    highlight: tango  
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(dplyr)
+library(psych)
+library(ggplot2)
+library(corrplot)
+library(GGally)
+library(ISLR)
+library(MASS)
+library(candisc)
+library(mvnormtest)
+library(ICSNP)
+library(klaR)
+library(HDMD)
+library(Hotelling)
+library(heplots)
+library(gridExtra)
+library(scales)
+library(ROCR)
+```
+
+```{r include=FALSE}
+wine<-Wine
+wine<-wine[-c(122,60,116,26),]
+wine.active<-wine[,-1]
+wine.cultivar<-wine[,1]
+```
+
+
+#Информация о данных
+
+Данные являются результатом химического анализа красных вин, выращенных в одном и том же регионе Италии, но полученных из трех разных сортов. Переменные -- различные химические показатели.
+
+
+  1) Cultivar сорт винограда, качественный признак
+ 	2) Alcohol процент содержания алкоголя
+ 	3) Malic acid яблочная кислота
+ 	4) Ash осадок
+	5) Alcalinity of ash щелочность осадка
+ 	6) Magnesium магний
+	7) Total phenols общее содержание фенолов
+ 	8) Flavanoids флаваноиды
+ 	9) Nonflavanoid phenols нефлаваноидные фенолы
+ 	10) Proanthocyanins проантоцианы
+	11) Color intensity интенсивность цвета
+ 	12) Hue оттенок
+ 	13) OD280/OD315 of diluted wines показатель разведенности
+ 	14) Proline пролин
+
+количество индивидов в каждой группе:
+
+1) 58
+
+2) 68
+
+3) 48
+
+Всего индивидов: 174.
+
+Максимально возможное количество канонических переменных: 2.
+
+Первым делом рассмотрим matrx-plot, расскрашенный в соответствии с сортом винограда. Красным цветом отображается сорт barolo,зеленым -- grignolino, синим -- barbera.
+
+```{r warning=FALSE}
+ggpairs(wine.active,aes(colour = as.factor(wine.cultivar), alpha = 0.4), upper = list(continuous = "points", combo =
+  "facethist", discrete = "facetbar", na = "na"))
+```
+
+
+Группы довольно ощутимо различаются, иногда по одному направленю, иногда по нескольким. Можно рассмотреть обрезанный matrix-plot, чтобы было лучше видно:
+```{r warning=FALSE}
+ggpairs(wine.active[,c(1,4,7,9,10,13)],aes(colour = as.factor(wine.cultivar), alpha = 0.4), upper = list(continuous = "points", combo =
+  "facethist", discrete = "facetbar", na = "na"), 
+  diag = list(continuous ="barDiag", discrete = "barDiag", na = "naDiag",binwidth = 0.4))
+```
+
+Различия между группами существенны, но группы довольно сильно пересекаются, что может быть не очень хорошо для последующей классификации.
+
+# Дискриминантный анализ
+## Соответствие модели
+
+Для того, чтобы тесты значимости имели смысл, нужно, чтобы данные соответствовали модели, то есть, в данном случае, чтобы в каждой группе было нормальное распределение с одной и той же ковариационной матрицей.
+На самом деле, посмотрев на matrix-plot, мы не слишком надеемся на соответствие модели, по картинкам видно, что облака точек имеют разную форму по группам, что значит, что ковариационные матрицы различаются.
+
+Гомоскедастичность. Проверяем гипотезу о том, что все ковариационные матрицы равны.
+```{r}
+wine.boxM<-boxM(wine.active,wine.cultivar)
+wine.boxM
+```
+
+Никакой гомоскедастичности. Нормальность можно и не проверять, все равно нет соответствия модели (но если решим проверить: ее тоже совсем нет). 
+
+
+
+##Значимость различий между группами 
+
+Перед тем, как проводить дискриминантный анализ и анализировать различия между группами, убедимся в том, что отличия между группами действительно есть (мы полагаем, что это так, изучив matrix-plot).
+Проверяем гипотезу о том, что средние в группах равны при помощи различных тестов.
+```{r}
+wine.manova<-manova(as.matrix(wine.active)~wine.cultivar)
+summary(wine.manova,'Wilks')
+summary(wine.manova,'Pillai')
+summary(wine.manova,'Hotelling-Lawley')
+summary(wine.manova,'Roy')
+```
+
+Все тесты явно отвергают гипотезу.
+
+##Hotelling test
+Для того, чтобы понять, какие группы между собой различаются, можно использовать тест Хотелинга.
+```{r}
+print(hotelling.test(.~Cultivar, data = wine, pair = c(1,2)))
+print(hotelling.test(.~Cultivar, data = wine, pair = c(2,3)))
+print(hotelling.test(.~Cultivar, data = wine, pair = c(3,1)))
+```
+Все группы между собой значимо различаются.
+
+##Расстояние Махаланобиса между группами
+
+```{r warning=FALSE}
+pooled.cov<-wine.boxM$pooled
+print(pairwise.mahalanobis(wine.active, cov = pooled.cov,grouping = wine.cultivar)$distance)
+```
+
+Все сорта сильно отличаются друг от друга. Наибольшее расстояние между сортами barolo и barbera.
+
+
+
+##Линейный дискриминантный анализ:
+
+Для проведения линейного дискриминантного анализа будем использовать функцию candisc.
+```{r}
+wine.lm <- lm(cbind(Alcohol,MalicAcid, Ash,AlcAsh,Mg,Phenols,Flav,NonFlavPhenols,Proa,
+                    Color,Hue,OD,Proline) ~ Cultivar, data=wine)
+wine.can<- candisc(wine.lm, term = "Cultivar")
+wine.can
+dataset = data.frame(Cultivar = as.factor(wine[,"Cultivar"]),
+                     wine.can = wine.can$scores)
+ggplot(dataset) + geom_point(aes(wine.can$scores$Can1, wine.can$scores$Can2, colour = Cultivar, shape = Cultivar), size = 2.5) + 
+  labs(x = paste("Can1 (", round(wine.can$pct[1],2), "%)", sep=""),
+       y = paste("Can2 (", round(wine.can$pct[2],2), "%)", sep=""))
+```
+
+Сразу видно, что вторая каноническая переменная тоже нужна. Первая переменная хорошо находит разницу между сортами "barolo" и "barbera", а вторая -- разницу между этими двумя и третим сортом.
+
+Значимость канонических переменных проверяется при помощи теста Lambda-prime.
+```{r}
+print(wine.can)
+```
+
+
+Для обеих канонических переменных гипотеза о незначимости отвергается.
+
+
+Теперь рассмотрим значения стандартизованных дискриминантных фунций и factor structure.
+```{r}
+wine.can$coeffs.std
+wine.can$structure
+```
+
+Интерпретировать канонические переменные удобно, используя следующий график:
+```{r warning=FALSE}
+plot(wine.can,col = c(2,3,4),var.col = "black")
+```
+
+Логично предположить, что вина должны различаться по качеству.
+
+Немного дополнительной информации.
+Конечно, сложно оценивать стоимость вин по сорту винограда, так как она сильно варьируется в зависимости от многих факторов, но можно некоторые тенденции все же определить (для по крайней мере одного и того же региона). Так, вино из винограда gtignolino  в среднем стоит 1000 рублей, barbera -- в среднем 800, а цена на вино из винограда barolo в среднем составляет 6000 рублей (доходит и до 50000).
+Исходя из средней стоимости, возникает мысль, что те исходные переменные, которые направлены примерно в ту же сторону, что первая каноническая переменная -- оказывают положительное влияние на вкусовые качества вина.
+
+Возможно, первая каноническая переменная как раз и имеет смысл качества или вкуса? Чтобы ответить на этот вопрос, нужно немного разобраться в интерпретации исходных переменных и понять, как они могут влиять на качество вина (или на другие его понятные характеристики).
+
+Переменные Flav (флавоноиды) и Phenols (общее содержание фенолов) практически сонаправлены с первой канонической компонентой. Именно полифенолы и, в частности, флавоноиды, дают вину способность предупреждать сердечно-сосудистую недостаточность (а также развитие рака, Альцгеймера и тд.) и в основном именно они отвечают за полезность.
+Яблочная кислота способствует пищеварению, но влияет на вкус, при увеличении доли кислоты он становится резким.
+Также ее больше в незрелом винограде. 
+Пролин принимает активное участие при формировании полноты вкуса, также является одним из критериев натуральности вина.
+
+Таким образом, первая каноническая переменная имеет смысл качества вина.
+
+Тогда можно сказать, что сорт barolo имеет наивысшее качество, grignolino -- среднее, а barbera -- похуже. Этот вывод хорошо соотносится с нашими заметками о цене этих вин.
+
+Вторая каноническая переменная описывает разницу между сортами barolo, barbera и сортом grignolino.
+Судя по картинке, вина из сорта grignolino имеют не очень яркий вкус и неинтенсивный цвет, а также значительно более низкое содержание алкоголя. По остальным показателям оно является средним. Видимо, вторая каноническая переменная имеет смысл, связанный конкретно с сортом grignolino и его спецификой. P.S.: вино из винограда grignolino называют самым белым среди красных.
+
+
+Интерпретация в factor pattern и factor structure несколько отличается. Возможно, это связано с зависимостями в исходных данных.
+
+##Уменьшение числа признаков
+
+Пошаговый дискриминантный анализ (пошаговое включение признаков).
+
+```{r}
+wine.forward<-greedy.wilks(Cultivar~.,data=wine, niveau = 0.01)
+print(wine.forward)
+```
+
+Можем построить DA по тем переменным, которые советует оставить пошаговый DA.
+```{r}
+wine.short.lm <- lm(cbind(Flav, Color,Proline,Alcohol,Hue,OD, AlcAsh, Ash,Phenols) ~ Cultivar, data=wine)
+
+wine.short.can<- candisc(wine.short.lm, term = "Cultivar")
+plot(wine.short.can,rev.axes=c(TRUE,FALSE),col = c(2,3,4),var.col = "black")
+```
+
+Ничего принципиально не изменилось.
+
+
+#Классификация
+
+Как уже выяснили, гомоскедастичности по группам нет, поэтому формально не имеем права применять lda. Но посмотрим, что получится. Классификацию будем проводить по переменным, оставшимся после удаления избыточных переменных. Во-первых, результат не должен сильно меняться (по крайней мере для lda), во-вторых, чем меньше исходных прихнаков, тем меньше параметров в модели lda и qda. В случае qda это особенно важно, так как метод работает только тогда, когда в каждом классе обучающей выборки строго больше индивидов, чем количество признаков. (А у нас индивидов не очень много, так что это действительно важно.) 
+
+##LDA
+
+```{r include=FALSE}
+wine<-wine[,c(1,2,4,5,7,8,11,12,13,14)]
+wine.active<-wine[,-1]
+```
+
+Таблица классификации:
+```{r}
+wine.train <-wine.active
+wine.lda <-lda(wine.train, wine.cultivar)
+wine.ldap<- predict(wine.lda, wine.train)$class
+table( wine.cultivar,wine.ldap)
+```
+
+Линейная классификация всю выборку (тренировочную) классифицирует правильно.
+
+По кросс-валидации:
+```{r}
+wine.lda.cv <- lda(wine.train, wine.cultivar, CV = TRUE)
+table(wine.cultivar,wine.lda.cv$class)
+```
+
+В просранстве первых двух канонческих переменных:
+```{r}
+class.true<-as.factor(wine.lda.cv$class ==wine.cultivar)
+dataset = data.frame(Cultivar = as.factor(wine[,"Cultivar"]),
+                     wine.short.can = wine.short.can$scores)
+ggplot(dataset) + geom_point(aes(wine.short.can$scores$Can1, wine.short.can$scores$Can2, colour = class.true, shape = Cultivar), size = 2.5) + 
+  labs(x = paste("Can1 (", round(wine.short.can$pct[1],2), "%)", sep=""),
+       y = paste("Can2 (", round(wine.short.can$pct[2],2), "%)", sep=""))
+```
+
+
+
+Два наблюдения классифицировано неправильно (были grignolino, стали barbera). 
+
+Посмотрим на апостериорные вероятности тех наблюдений, где были допущены ошибки:
+```{r}
+index<-which(wine.lda.cv$class !=wine.cultivar)
+wine.lda.cv$posterior[index,]
+```
+
+Может быть, немного увеличить веса для сорта grignolino?
+Исходно априорные вероятности пропорциональны объему классов:
+```{r}
+wine.lda$prior
+```
+```{r}
+
+wine.lda.cv<-lda(wine.train, wine.cultivar, CV = TRUE,prior=c(0.45,0.5,0.05))
+table( wine.cultivar,wine.lda.cv$class)
+```
+но то, что мы сделали, вообще говоря, является подгонкой. Хотя веса остались  в том же порядке, что и были (по размеру), не совсем выходит обосновать (помимо подгонки), почему мы сделали такой маленький вес для сорта barbera, так что далее эти веса использовать все же не будем.
+
+Графики partimat удобнее смотреть в сравнении с результатами qda. (т.е. это будет ниже.)
+
+
+
+##QDA
+
+Таблица классификации:
+```{r}
+wine.qda <-qda(wine.train, wine.cultivar)
+wine.qdap<- predict(wine.qda, wine.train)$class
+table(wine.cultivar,wine.qdap)
+```
+
+Также, как и в случае lda, исходные данные классифицируются верно. По кросс-валидации:
+```{r}
+wine.qda <- qda(wine.train, wine.cultivar, CV = TRUE)
+table( wine.cultivar,wine.qda$class)
+```
+
+Одно неправильно классифицированное наблюдение. То есть вроде как более хорошая обобщающая способность, чем у lda. Возможно, что этот вариант (qda) в данном случае действительно лучше, чем lda. Попробуем после проверить на тренировочной-тестовой выборках.
+
+##Сравнение результатов
+
+Сравним формы классификации lda и qda.
+```{r}
+partimat(Cultivar ~ Flav+Color+Proline+Alcohol, wine, method="lda",gs=c(rep("o",58),rep("g",68),rep("a",48)))
+```
+```{r}
+partimat(Cultivar ~ Flav+Color+Proline+Alcohol, wine, method="qda",gs=c(rep("o",58),rep("g",68),rep("a",48)))
+```
+
+Можно заметить, что формы классифицирующих областей, в принципе, довольно похожи. На мой взгляд, qda больше похож на правду.
+
+
+Сравним результаты на разных выборках.
+
+LDA:
+```{r}
+wine.train <- wine[-seq(1,nrow(wine),3),] 
+wine.unknown<- wine[seq(1,nrow(wine),3),]
+wine.lda <- lda(wine.train[,-1], wine.train[,1])
+wine.ldap<- predict(wine.lda, wine.unknown[,-1])$class
+table( wine.unknown[,1],wine.ldap)
+```
+
+QDA не работает, если в некоторых группах мало наблюдений (должно быть больше (строго), чем переменных). Это еще одна причина, почему классификацию стоит проводить не по всем переменным, а по тем, которые остались, после удаления избыточных.
+Вообще, как показывают результаты при различном разбиении данных на тренировочную и тестовую выборку (а также интернет и здравый смысл), qda очень сильно зависит от объема тренировочной выборки. При малом объеме получается почти ерунда, так как параметров много, а наблюдений мало.
+
+QDA:
+```{r}
+wine.qda <- qda(wine.train[,-1], wine.train[,1])
+wine.qdap<- predict(wine.qda, wine.unknown[,-1])$class
+table( wine.unknown[,1],wine.qdap)
+```
+
+Окей, когда берем тренировочную выборку достаточно большого размера (относительно), то получается и там и там хорошо. (В данном случае мы 2/3 наблюдений отправили в тренировочную выборку и 1/3 в тестовую.)
+
+Если наоборот:
+```{r}
+wine.train <- wine[seq(1,nrow(wine),3),] 
+wine.unknown<- wine[-seq(1,nrow(wine),3),]
+wine.lda <- lda(wine.train[,-1], wine.train[,1])
+wine.ldap<- predict(wine.lda, wine.unknown[,-1])$class
+```
+
+LDA:
+```{r}
+ct<-table( wine.unknown[,1],wine.ldap)
+ct
+prop.table(ct, 1)
+```
+
+QDA:
+```{r}
+wine.qda <- qda(wine.train[,-1], wine.train[,1])
+wine.qdap<- predict(wine.qda, wine.unknown[,-1])$class
+ct<-table( wine.unknown[,1],wine.qdap)
+ct
+prop.table(ct, 1)
+```
+
+С тренировочной выборкой такого размера у qda проблемы (у lda тоже, но поменьше).
+
+
+
+#ROC
+
+Предположим, что мы решили потратиться и купить вино из винограда сорта barolo. Но мы не вполне уверены в честности продавца и боимся, что он подсунет нам менее качественное вино, выдав его за barolo.
+
+Объединим классы grignolino и barbera.
+
+
+```{r}
+levels(wine$Cultivar)<-c("A","B","B")
+zl <- lda(Cultivar ~ ., wine, prior = c(1,1)/2)
+lda.pred<- predict(zl, wine)
+zq<-qda(Cultivar ~ ., wine, prior = c(1,1)/2)
+qda.pred<-predict(zq,wine)
+pred.lda <- prediction(lda.pred$posterior[,2], wine$Cultivar)
+pred.qda <- prediction(qda.pred$posterior[,2], wine$Cultivar)
+perf <- performance(pred.lda, "tpr","fpr") 
+perfq <- performance(pred.qda, "tpr","fpr") 
+```
+
+LDA:
+```{r}
+plot(perf, colorize = TRUE,lwd=4)
+```
+
+
+QDA:
+```{r}
+plot(perfq,colorize=TRUE,add=FALSE)
+```
+
+К сожалению (или к счастью) у нас все совсем хорошо.
+
+
+Если объединить другие два класса (barola и barbera):
+```{r include=FALSE}
+wine<-Wine
+wine<-wine[-c(122,60,116,26),]
+wine<-wine[,c(1,2,4,5,7,8,11,12,13,14)]
+wine.active<-wine[,-1]
+wine.cultivar<-wine[,1]
+```
+```{r}
+levels(wine$Cultivar)<-c("A","B","A")
+zl <- lda(Cultivar ~ ., wine, prior = c(1,1)/2)
+lda.pred<- predict(zl, wine)
+zq<-qda(Cultivar ~ ., wine, prior = c(1,1)/2)
+qda.pred<-predict(zq,wine)
+pred.lda <- prediction(lda.pred$posterior[,2], wine$Cultivar)
+pred.qda <- prediction(qda.pred$posterior[,2], wine$Cultivar)
+perf <- performance(pred.lda, "tpr","fpr") 
+perfq <- performance(pred.qda, "tpr","fpr") 
+plot(perf, col=2,lwd=4)
+plot(perfq,col=1,add=TRUE,lwd=1)
+```
+
+Таким образом, для последнего разбиения на два класса модель qda лучше:
+```{r}
+AUC.ROCR.lda <- performance(pred.lda,"auc")
+AUC.ROCR.qda <- performance(pred.qda,"auc")
+print(AUC.ROCR.lda@y.values[[1]])
+print(AUC.ROCR.qda@y.values[[1]])
+```
+
+Посмотрим теперь на тренировочную-тестовую выборку.
+```{r include=FALSE}
+wine<-Wine
+wine<-wine[-c(122,60,116,26),]
+wine<-wine[,c(1,2,4,5,7,8,11,12,13,14)]
+wine.active<-wine[,-1]
+wine.cultivar<-wine[,1]
+```
+```{r}
+wine.train <- wine[-seq(1,nrow(wine),3),] 
+wine.unknown<- wine[seq(1,nrow(wine),3),]
+```
+
+```{r}
+levels(wine$Cultivar)<-c("A","B","A")
+
+wine.train <- wine[seq(1,nrow(wine),3),] 
+wine.unknown<- wine[-seq(1,nrow(wine),3),]
+zl <- lda(wine.train[,-1], wine.train[,1],prior = c(1,1)/2)
+lda.pred<- predict(zl, wine.unknown[,-1])
+
+zq<-qda(wine.train[,-1], wine.train[,1],prior = c(1,1)/2)
+qda.pred<-predict(zq,wine.unknown[,-1])
+pred.lda <- prediction(lda.pred$posterior[,2], wine.unknown$Cultivar)
+pred.qda <- prediction(qda.pred$posterior[,2], wine.unknown$Cultivar)
+perf <- performance(pred.lda, "tpr","fpr") 
+perfq <- performance(pred.qda, "tpr","fpr") 
+plot(perf, col=2,lwd=4)
+plot(perfq,col=1,add=TRUE,lwd=1)
+```
+
+Снова qda лучше.
+
+По кросс-валидации:
+
+```{r}
+zl <- lda(wine.active, wine$Cultivar,prior = c(1,1)/2, CV=TRUE)
+zq<-qda(wine.active, wine$Cultivar,prior = c(1,1)/2,CV=TRUE)
+pred.lda <- prediction(zl$posterior[,2], wine$Cultivar)
+pred.qda <- prediction(zq$posterior[,2], wine$Cultivar)
+perf <- performance(pred.lda, "tpr","fpr")
+perfq <- performance(pred.qda, "tpr","fpr")
+plot(perf, col=2,lwd=4)
+plot(perfq,col=1,add=TRUE,lwd=1)
+AUC.ROCR.lda <- performance(pred.lda,"auc")
+AUC.ROCR.qda <- performance(pred.qda,"auc")
+print(AUC.ROCR.lda@y.values[[1]])
+print(AUC.ROCR.qda@y.values[[1]])
+```
+
+Результат qda лучше, но не значительно.
