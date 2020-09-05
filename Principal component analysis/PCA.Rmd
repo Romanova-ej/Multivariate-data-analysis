@@ -1,0 +1,247 @@
+---
+title: "Principal component analysis"
+author: "Romanova"
+date: '20 октября 2018 г '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(ade4)
+library(factoextra)
+```
+
+Данные INITIAL. Собрали разных людей, измерили у них различные показатели состояния зубов:
+воспаления десны вокруг зуба (гингивитные индексы DGI, KGI, MGI)  и
+налет на зубах (бляшечный индекс PLI). 
+
+```{r include=FALSE}
+initial<-read.table("INITIAL.DAT",header = TRUE,skip = 1)
+add.inf<-read.table("TEETH.INF",header = TRUE)
+initial.active<-scale(initial[,-1])
+```
+```{r include=FALSE}
+add.inf$age2[add.inf$age<29] <- 1 
+add.inf$age2[(add.inf$age>=29)&(add.inf$age)<39] <- 2 
+add.inf$age2[(add.inf$age>=39)&(add.inf$age)<50] <- 3 
+add.inf$age2[add.inf$age>=50] <- 4
+```
+
+Чтобы немного лучше представлять, что из себя представляют данные, взглянем на корреляционную матрицу
+```{r}
+cor(initial.active)
+```
+В описании данных было сказано, что DGI и KGI суть одна и та же характеристика, измеренная разными врачами. Действительно, эти признаки сильно коррелированы. Корреляция с третьим признаком, отвечающим за воспаление десны -- невысокая (около 0.2).
+
+
+В пакете ade4 анализ главных компонент осуществляет функция dudi.pca:
+
+
+####dudi.pca(df, row.w = rep(1, nrow(df))/nrow(df), col.w = rep(1, ncol(df)), center = TRUE, scale = TRUE, scannf = TRUE, nf = 2)
+    
+###Arguments
+
+df
+a data frame with n rows (individuals) and p columns (numeric variables)
+
+row.w	
+an optional row weights (by default, uniform row weights)
+
+col.w	
+an optional column weights (by default, unit column weights)
+
+center	
+a logical or numeric value, centring option
+if TRUE, centring by the mean
+if FALSE no centring
+if a numeric vector, its length must be equal to the number of columns of the data frame df and gives the decentring
+
+scale	
+a logical value indicating whether the column vectors should be normed for the row.w weighting
+
+scannf	
+a logical value indicating whether the screeplot should be displayed
+
+nf	
+if scannf FALSE, an integer indicating the number of kept axes
+
+###Value
+
+Returns a list of classes pca and dudi (see dudi) containing the used information for computing the principal component analysis :
+
+tab	
+the data frame to be analyzed depending of the transformation arguments (center and scale)
+
+cw	
+the column weights
+
+lw	
+the row weights
+
+eig	
+the eigenvalues $\lambda_{i}$
+
+rank	
+the rank of the analyzed matrice
+
+nf	
+the number of kept factors
+
+c1	
+the column normed scores i.e. the principal axes $U_{i}$
+
+l1	
+the row normed scores $V_{i}$
+
+co	
+the column coordinates $F_{i}$
+
+li	
+the row coordinates i.e. the principal components $Z_{i}$
+
+call	
+the call function
+
+cent	
+the p vector containing the means for variables (Note that if center = F, the vector contains p 0)
+
+norm	
+the p vector containing the standard deviations for variables i.e. the root of the sum of squares deviations of the values from their means divided by n (Note that if norm = F, the vector contains p 1)
+
+
+
+
+Вычисляем PCA при помощи функции dudi.pca пакета ade4.
+```{r}
+res.pca<-dudi.pca(initial.active, nf = 4, scannf = FALSE)
+```
+
+Величина собственных чисел корреляционной матрицы (данные стандартизированы) показывает, какой процент от общего разброса объясняет каждая главная компонента.
+Собственные числа ($\lambda_{i}$):
+```{r}
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+```
+Первые два новых признака более информативны, чем старые (значение > 1). 
+84% разброса объясняется первыми двумя главными компонентами. 95% -- тремя.
+
+В виде графика:
+```{r}
+fviz_eig(res.pca)
+```
+
+
+Собственные векторы ($U_{i}$): 
+```{r}
+res.pca$c1
+```
+
+Из таблицы видно, что в первую главную компоненту все переменные вносят существенный вклад, причем все переменные входят с одним знаком. Эту компоненту можно интерпретировать как общее состояние зубов (чем больше значение, тем хуже состояние зубов).
+Вторая главная компонента показывает разницу между похожими показателями DGI и KGI  и показателями MGI и PLI.
+Третья компонента суть разница между уровнем воспаления десен и зубным налетом, причем за показатель уровня воспаления берется признак MGI.
+Четвертая компонента (от которой вполне можно избавиться) по смыслу довольно странная и в лоб интерпретируется как разница между оценкой воспаления одним специалистом и оценкой воспаления другим специалистом.
+
+
+Матрица факторных весов (координаты признаков) $\mathbb{F}=(F_{i})$:
+```{r}
+res.pca$co
+```
+
+
+На двумерной диаграмме факторных весов можно наблюдать, как связаны первые главные компоненты и старые признаки. При помощи этого графика можно интерпретировать первые две главные компоненты.
+Длины векторов, соответствующих старым признакам, пропорциональны тому, насколько каждый старый признак описывается первыми двумя главными компонентами. Эти векторы раскрашены в соответствии с параметром "contrib". Величина этого параметра показывает, насколько большой вклад вносит переменная в анализ главных компонент. 
+
+
+Пусть $X_{i}$ -- $i$-й старый признак (мы его предварительно стандартизировали), $d=p$.
+Тогда вклад $i$-го признака в $j$-ю главную компоненту  вычисляется следующим образом:
+$$
+\mathrm{contrib}(X_{i},V_{j})=\frac{\cos^{2}(X_{i},V_{j})*100}{\sum_{k=1}^{d}\cos^{2}(X_{k},V_{j})}
+=
+\frac{f_{ij}^{2}*100}{||F_{j}||^{2}}
+=
+\frac{f_{ij}^{2}*100}{\lambda_{j}}.
+$$
+
+Вклад $i$-й переменной в первые две главные компоненты (именно он и отображается на графике цветом) вычисляется по формуле
+$$
+\mathrm{Contrib}(X_{i})
+=
+\frac
+{\lambda_{1}\mathrm{contrib}(X_{i},V_{1})
++
+\lambda_{2}\mathrm{contrib}(X_{i},V_{2})}
+{\lambda_{1}+\lambda_{2}}
+=
+\frac
+{100(f_{i1}^{2}+f_{i2}^{2})}{\lambda_{1}+\lambda_{2}}.
+$$
+
+
+```{r}
+fviz_pca_var(res.pca,
+             col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE   
+             )
+```
+
+В данном случае мы уже интерпретировали главные компоненты при помощи значений собственных векторов $U_{i}$, информация о первых двух компонентах, которую можно извлечь из настоящего графика, не противоречит полученной ранее информации: видно, что в первую компоненту все переменные входят с одним знаком, а во второй компоненте по разные стороны находятся признаки KGI, DGI и MGI, PLI. Переменные KGI и DGI лучше всех описываются первыми главными компонентами и вносят наибольший вклад в анализ главных компонент. Отметим, однако, что, хоть раскраска и показывает нам верную иерархию вклада старых признаков, но разница между вкладами на самом деле не очень большая (признак PLI вносит не намного меньший вклад, чем, наример, KGI).
+
+
+Следующий график (биплот) изображает наблюдения в системе координат первых двух главных компонент. На нем можно увидеть неоднородность данных (если она есть) и аутлаеров. Также можно указать направления старых признаков.
+```{r}
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "#2E9FDF", 
+                col.ind = "#696969",  
+                label = "var"
+                )
+```
+
+В данном случае нет неоднородности, которая бы бросалась в глаза. Но попробуем раскрасить наблюдения в соответствии с доступными  качественными признаками, чтобы это проверить.
+
+Биплот по группам женщины/мужчины (неоднородности не выявлено):
+```{r warning=FALSE}
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "black",
+                 col.ind = as.factor(add.inf$sex),
+                label = "var",
+                pointsize = as.factor(add.inf$sex)
+                )
+
+```
+
+По группам по возрасту:
+```{r}
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "#2E9FDF",
+                 col.ind = add.inf$age,
+                label = "var",
+                 gradient.cols = c("#00AFBB", "#FC4E07")
+                )
+```
+
+В градиентном варианте не слишком хорошо видно, есть ли неоднородность, так что создадим группирующую качественную переменную и раскрасим в соответствии с ней.
+```{r warning=FALSE}
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "black", 
+                 col.ind = as.factor(add.inf$age2),
+                label = "var",
+                pointsize = as.factor(add.inf$age2)
+                )
+```
+
+Неоднородности как таковой нет, младшие индивиды сдвинуты немного влево, но форма сохраняется  и это больше похоже на "раскраску", чем на неоднородность. Принимать наиболее далеких индивидов за выбросы здесь тоже рука не поднимается.
+Поэтому данные оставляем без изменений. Можем провести еще раз анализ главных компонент, задав итоговое количество учитываемых компонент (мы уже знаем, что 2 главные компоненты обеспечивают 84% информации, что довольно прилично).
+```{r}
+res.pca<-dudi.pca(initial.active, nf = 2, scannf = FALSE)
+```
+
+
+Матрица $\mathbb{Z}$ главных компонент (координаты индивидов):
+```{r}
+res.pca$li[1:6,]
+```
