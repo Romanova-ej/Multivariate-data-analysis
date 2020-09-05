@@ -1,0 +1,367 @@
+---
+title: "Clustering"
+author: "Romanova"
+date: '17 декабря 2018 г '
+output: 
+  html_document:
+    toc: true 
+    toc_depth: 3 
+    toc_float: true
+    number_sections: true  
+    theme: united 
+    highlight: tango  
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r include=FALSE}
+library(dplyr)
+library(psych)
+library(ggplot2)
+library(corrplot)
+library(GGally)
+library(ISLR)
+library(MASS)
+library(candisc)
+library(vegan)
+library(klaR)
+library(heplots)
+library(gridExtra)
+library(factoextra)
+library(flexclust)
+library(ade4)
+library(mclust)
+require(stats); require(graphics)
+library(scales)
+```
+
+```{r include=FALSE}
+wine<-Wine
+wine<-wine[-c(122,60,116,26),]
+wine<-wine[,c(1,2,4,5,7,8,11,12,13,14)]
+wine.cultivar<-wine[,1]
+wine.active<-wine[,-1]
+wine.active<-scale(wine.active)
+wine.active<-as.data.frame(wine.active)
+```
+
+
+#Информация о данных
+
+Данные являются результатом химического анализа красных вин, выращенных в одном и том же регионе Италии, но полученных из трех разных сортов. Переменные -- различные химические показатели.
+
+
+  1) Cultivar сорт винограда, качественный признак
+ 	2) Alcohol процент содержания алкоголя
+ 	3) Ash осадок
+	4) Alcalinity of ash щелочность осадка
+	5) Total phenols общее содержание фенолов
+ 	6) Flavanoids флаваноиды
+	7) Color intensity интенсивность цвета
+8) Hue оттенок
+ 	9) OD280/OD315 of diluted wines показатель разведенности
+ 	10) Proline пролин
+
+количество индивидов в каждой группе:
+
+1) 58
+
+2) 68
+
+3) 48
+
+Всего индивидов: 174.
+
+
+Первым делом рассмотрим matrx-plot, расскрашенный в соответствии с сортом винограда. Красным цветом отображается сорт barolo,зеленым -- grignolino, синим -- barbera.
+
+```{r warning=FALSE}
+ggpairs(wine.active,aes(colour = as.factor(wine.cultivar), alpha = 0.4), upper = list(continuous = "points", combo =
+  "facethist", discrete = "facetbar", na = "na"))
+```
+
+Группы ощутимо различаются, поэтому надеемся, что методы кластеризации смогут их более менее правильно разделить.
+
+#Кластеризация
+
+## Иерархический анализ
+
+Матрица расстояний:
+```{r}
+m<-dist(scale(wine.active))
+```
+
+Будем использовать метод слияния Уорда, где в качестве расстояния между кластерами берётся прирост суммы квадратов расстояний индивидов до центра кластера, получаемого в результате их объединения
+```{r}
+wine.hc <- hclust(m, method = "ward.D2")
+```
+
+В плане интерпретации дендрограмма в данном случае не сможет сильно помочь, так как индивиды, во-первых, не персонализованы, во-вторых, их многовато для такой картинки. Однако мы ее построим для того, чтобы визуально оценить количество кластеров.
+```{r}
+plot(wine.hc)
+```
+
+Судя по картинке, наиболее правдоподобный вариант -- выделять 3 кластера. Этот вывод соответствует реальности, так как в дейсвительности у нас тоже 3 класса.
+
+Сравним с действительностью:
+```{r}
+table(wine.cultivar,cutree(wine.hc, k = 3))
+```
+
+Идеально.
+
+Вместо метода Уорда можно использовать и другие методы, например, “Single link” (метод ближайшего соседа).
+```{r}
+wine.hc2 <- hclust(m, method = "single")
+plot(wine.hc2)
+table(wine.cultivar,cutree(wine.hc2, k = 3))
+which(cutree(wine.hc2, k = 3)==c(2,3))
+```
+
+Этот метод нам явно не подходит. Два наблюдения, которые на самом деле являются граничными в группах, приняты за отдельные кластеры, а все остальное -- за один большой кластер.
+
+
+
+## Gaussian mixture models
+
+Часто к хорошему результату приводит предположение, что данные есть смесь нормальных распределений. Тогда можно использовать метод максимального правдоподобия и EM-алгоритм для нахождения максимума правдоподобия.
+
+###Кластеризация полного набора данных
+
+####Выбор модели
+
+Для выбора модели, наиболее соответствующей нашим данным, будем использовать информационные критерии.
+
+Байесовский информационный критерий BIC:
+
+
+```{r}
+BIC <- mclustBIC(wine.active)
+plot(BIC)
+```
+
+То, что кластера будет три -- это точно. Но нужно решить, какую модель ковариационных матриц мы выберем. Три наилучшии модели по BIC:
+```{r}
+summary(BIC)
+```
+Итак, получили модели VVE (3), EVE(3), VVE(4). VVE(4) сразу отбрасываем, так как эта модель хуже, чем VVE(3), но явно имеет большее число параметров. Первые же две модели есть смысл сравнить.
+
+Число параметров в модели  VVE(3) равно (первая скобка -- ковариационная матрица, вторая -- компоненты смеси, третья -- средние)
+$$
+(d(d-1)/2+(d-1)k +k)+(k-1)+kd
+=
+92.
+$$
+```{r}
+Mclust(wine.active, modelNames = "VVE",G=3)$df
+```
+
+В модели EVE(3):
+$$
+(d(d-1)/2+(d-1)k+1)+(k-1)+kd
+=
+90.
+$$
+```{r}
+Mclust(wine.active, modelNames = "EVE",G=3)$df
+```
+
+Таким образом, у наилучшей модели не намного (на два) больше параметров, чем у следующей, поэтому останавливаем выбор на первой (наилучшей) модели VVE(3). Однако параметров все же очень много (из-за того, что у нас большое d=9), поэтому нужно будет рассматривать варианты понижения размерности.
+
+Критерий ICL также предлагает использовать эту модель.
+```{r}
+ICL<-mclustICL(wine.active)
+plot(ICL)
+summary(ICL)
+```
+
+####Кластеризация 
+
+(На самом деле тоже не совсем полного, мы исходно выкинули переменные, которы вносили совсем небольшой вклад в канонические переменные).
+
+Проведем кластеризацию 
+```{r}
+wine.mclust<-Mclust(wine.active, x=BIC)
+summary(wine.mclust)
+```
+
+В пространстве первых двух главных компонент:
+```{r}
+fviz_mclust(wine.mclust, "classification", geom = "point", 
+            pointsize = 1.5, palette = "jco")
+```
+
+Проверка:
+```{r}
+table(wine.cultivar,wine.mclust$classification)
+```
+
+Пять неправильно определенных наблюдений.
+
+На следующем графике размер точек пропорционален мере их неопределенности.
+```{r}
+fviz_mclust(wine.mclust, "uncertainty", palette = "jco")
+```
+
+<!-- ```{r} -->
+<!-- fviz_cluster(wine.mclust, data = wine.active, -->
+<!--              ellipse.type = "convex", -->
+<!--              palette = "jco", -->
+<!--              repel = TRUE, -->
+<!--              ggtheme = theme_minimal()) -->
+<!-- ``` -->
+
+###Кластеризация с меньшим числом параметров
+
+Проведем анализ главных компонент.
+
+```{r}
+wine.pca<-dudi.pca(wine.active,nf=9,scannf = FALSE)
+fviz_eig(wine.pca)
+get_eigenvalue(wine.pca)
+```
+
+Оставим 3 главные компоненты, объясняющие около 80% дисперсии.
+```{r}
+wine.pca$c1
+```
+
+Биплот:
+```{r warning=FALSE}
+fviz_pca_biplot(wine.pca, repel = TRUE,
+                col.var = "black",
+                 col.ind = as.factor(wine.cultivar),
+                label = "var",
+                pointsize = as.factor(wine.cultivar)
+                )
+```
+
+Первая главная компонента = качество, вторая компонента = специфика сорта grignolino, третья = свойства осадка.
+```{r}
+wine.pca<-dudi.pca(wine.active,nf=3,scannf = FALSE)
+wine.new<-wine.pca$li
+```
+
+```{r}
+BIC <- mclustBIC(wine.new)
+plot(BIC)
+summary(BIC)
+Mclust(wine.new, modelNames = "EEV",G=3)$df
+```
+
+Выбрали модель EEV(3) с 23 параметрами.
+```{r}
+wine.new.mclust<-Mclust(wine.new,x=BIC)
+summary(wine.new.mclust,parameters=TRUE)
+```
+
+Кружочки кластеризованы правильно, треугольники -- нет.
+```{r}
+wine.cultivar.plot<-as.factor(wine.cultivar)
+levels(wine.cultivar.plot)<-c(1,2,3)
+ggpairs(wine.new,aes(colour = as.factor(wine.new.mclust$classification),shape = as.factor(wine.new.mclust$classification!=wine.cultivar.plot),alpha=0.5), upper = list(continuous = "points", combo =
+  "facethist", discrete = "facetbar", na = "na"),diag = list(continuous ="barDiag", discrete = "barDiag", na = "naDiag"))
+```
+
+Проверка:
+```{r}
+table(wine.cultivar,wine.new.mclust$classification)
+```
+8 несовпадений с действительностью.
+
+##k-means
+
+Для того, чтобы понять, сколько кластеров использовать, можно воспользоваться следующим графиком:
+```{r}
+fviz_nbclust(wine.active, kmeans,method =  "wss")
+```
+
+на котором изображена зависимость внутригруппового разброса от количества кластеров.
+Принцип этого графика тот же, что у scree plot. Смотрим, с какого момента добавление нового кластера перестает давать значимое уменьшение суммы квадратов. По этому графику можем сказать, что в нашем случае 3 кластера, что совпадает с действительным количеством классов.
+
+Используем пакет flexclust. Обычный  k-means в евклидовой метрике:
+```{r}
+km.res <- kcca(wine.active, k=3) 
+```
+
+В плоскости первых двух гавных компонент: 
+```{r}
+fviz_cluster(as(km.res, "kmeans"), data = wine.active, 
+             ellipse.type = "convex",
+             palette = "jco",
+             repel = TRUE,
+             ggtheme = theme_minimal())
+
+table(wine.cultivar,predict(km.res))
+
+```
+
+
+```{r}
+ggpairs(cbind(as.data.frame(wine.active), Cluster=as.factor(predict(km.res))), 
+        columns = c(1,4,5,6,7,8,9),
+        aes(colour=Cluster, alpha=0.5),
+        lower=list(continuous="points"),
+        upper = list(continuous = "points", combo =
+  "facethist", discrete = "facetbar", na = "na"), 
+        axisLabels="none", switch="both")
+```
+
+После того, как мы произвели кластеризацию, полученные результаты можно использовать тем же образом, что и результаты классификации. То есть новые наблюдения причислять к кластеру при помощи уже полученного правила.
+Пример кластеризующих областей (для двух переменных):
+```{r}
+image(km.res,which=c(1,5),xlab="ALCOHOL",ylab="FLAV")
+```
+
+Ширина ребра на этом графике пропорциональна сумме теней всех точек, для которых эти два кластера (центры которых соединены ребром) являются самым близким из кластеров и вторым по близости кластером. Под тенью точки понимается отношение удвоенного расстояния от точки до кластера, к которому она определена, и суммы расстояний до самого ближайшего и второго ближайшего кластеров. По смыслу тень -- это аналог uncertainty. 
+
+
+k-means в манхетовской метрике:
+```{r}
+wine.clust<-cclust(wine.active,k=3,dist="manhattan")
+table(wine.cultivar,predict(wine.clust))
+```
+
+Кластеризующая область в манхетовской метрике немного отличается от предыдущей:
+```{r}
+image(wine.clust,which=c(1,5),xlab="ALCOHOL",ylab="FLAV")
+```
+```{r include=FALSE}
+wine.clust<-cclust(wine.active,k=3,dist="manhattan",save.data=TRUE)
+```
+
+k-means++:
+```{r}
+cl2 <- kcca(wine.active, k=3, family=kccaFamily("kmeans"),
+control=list(initcent="kmeanspp"))
+image(cl2,which=c(1,5),xlab="ALCOHOL",ylab="FLAV")
+points(wine.active)
+table(wine.cultivar,predict(cl2))
+```
+
+Расстояния от наблюдений до центра соответствующего кластера.
+```{r}
+stripes(cl2)
+```
+
+
+Можно рассматривать как аналог partimat:
+```{r}
+wine.cultivar.plot<-as.factor(wine.cultivar)
+levels(wine.cultivar.plot)<-c(3,2,1)
+
+op <- par(mfrow = c(2, 2))      
+image(cl2,which=c(1,5),xlab="ALCOHOL",ylab="FLAV")
+points(wine.active,col=as.factor(as.factor(predict(cl2))!=wine.cultivar.plot),pch=20)
+image(cl2,which=c(4,6),xlab="PHENOLS",ylab="COLOR")
+points(wine.active,col=as.factor(as.factor(predict(cl2))!=wine.cultivar.plot),pch=20)
+image(cl2,which=c(7,9),xlab="HUE",ylab="PROLINE")
+points(wine.active,col=as.factor(as.factor(predict(cl2))!=wine.cultivar.plot),pch=20)
+image(cl2,which=c(8,9),xlab="OD",ylab="PROLINE")
+points(wine.active,col=as.factor(as.factor(predict(cl2))!=wine.cultivar.plot),pch=20)
+par(op)
+```
+
+Таким образом, лучше всех с задачей кластеризации данных Wine справился иерархический анализ (метод Уорда), а Gaussian mixture models -- хуже всех. Это может быть связано с тем, что данные по группам у нас на самом деле далеки от нормальных, но при этом в каждой группе состоят действительно похожие между собой индивиды, значительно отличающиеся от двух других групп, поэтому более простые методы иерархического анализа и методы типа k-means справляются с задачей лучше.
